@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Customer Manager (Inline JS)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;line-height:1.4}
+    body{max-width:980px;margin:28px auto;padding:18px;background:#fff;color:#111}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between}
+    h1{font-size:1.25rem;margin:0}
+    .toolbar{display:flex;gap:8px;align-items:center}
+    input[type="search"], input[type="text"], input[type="email"], input[type="tel"], select{padding:8px;border:1px solid #ccc;border-radius:6px}
+    button{padding:8px 10px;border-radius:6px;border:1px solid #888;background:#f3f3f3;cursor:pointer}
+    button.primary{background:#2563eb;color:#fff;border-color:#1e40af}
+    button.ghost{background:transparent}
+    form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+    label{display:block;font-size:.85rem}
+    .full{grid-column:1/-1}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border:1px solid #e6e6e6;text-align:left;font-size:.95rem}
+    td.actions{white-space:nowrap}
+    .small{font-size:.9rem;color:#555}
+    .hidden{display:none}
+    .msg{padding:8px;border-radius:6px;margin-top:12px}
+    .msg.success{background:#ecfdf5;color:#065f46;border:1px solid #bbf7d0}
+    .msg.warn{background:#fff7ed;color:#92400e;border:1px solid #fed7aa}
+    .flex{display:flex;gap:8px;align-items:center}
+    footer{margin-top:18px;color:#555;font-size:.85rem}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Customer Manager</h1>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search name or email" aria-label="Search customers" />
+      <button id="exportCsv" title="Export visible customers as CSV">Export CSV</button>
+      <button id="clearAll" class="ghost" title="Clear all stored customers">Clear All</button>
+    </div>
+  </header>
+
+  <section aria-labelledby="form-title">
+    <h2 id="form-title" class="small">Add / Edit Customer</h2>
+    <form id="customerForm" novalidate>
+      <input type="hidden" id="customerId" />
+      <div>
+        <label for="name">Name</label>
+        <input id="name" type="text" required maxlength="100" placeholder="Jane Doe" />
+      </div>
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" required placeholder="name@example.com" />
+      </div>
+      <div>
+        <label for="phone">Phone</label>
+        <input id="phone" type="tel" placeholder="+1 555 555 5555" />
+      </div>
+      <div>
+        <label for="source">Source</label>
+        <select id="source">
+          <option value="">— choose —</option>
+          <option>Website</option>
+          <option>Referral</option>
+          <option>In-store</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="full">
+        <label for="notes">Notes</label>
+        <input id="notes" type="text" maxlength="300" placeholder="Optional note" />
+      </div>
+      <div class="full flex">
+        <button id="save" class="primary" type="submit">Save Customer</button>
+        <button id="reset" type="button">Reset</button>
+        <div id="formMsg" class="small" style="margin-left:auto;color:#666"></div>
+      </div>
+    </form>
+  </section>
+
+  <section aria-labelledby="list-title">
+    <h2 id="list-title" class="small">Customers</h2>
+    <div id="message" class="msg hidden"></div>
+    <table id="table" aria-live="polite">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Source</th>
+          <th>Joined</th>
+          <th class="actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <span class="small">Data stored locally in browser `localStorage`. No external network calls.</span>
+  </footer>
+
+  <script>
+    (function () {
+      const LS_KEY = 'customers_v1';
+      let customers = [];
+
+      // Utility: simple XSS-safe text node creation
+      function text(node, value) {
+        node.textContent = value == null ? '' : String(value);
+      }
+
+      function uid() {
+        return 'c_' + Date.now().toString(36) + '_' + Math.floor(Math.random()*9000+1000).toString(36);
+      }
+
+      function load() {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          customers = raw ? JSON.parse(raw) : [];
+        } catch (e) {
+          customers = [];
+          console.error('Failed to load customers', e);
+        }
+      }
+
+      function save() {
+        localStorage.setItem(LS_KEY, JSON.stringify(customers));
+      }
+
+      function showMessage(textStr, type = 'success', timeout = 2200) {
+        const el = document.getElementById('message');
+        el.className = 'msg ' + (type === 'success' ? 'success' : 'warn');
+        el.textContent = textStr;
+        el.classList.remove('hidden');
+        if (timeout) setTimeout(() => el.classList.add('hidden'), timeout);
+      }
+
+      function renderTable(filter = '') {
+        const tbody = document.getElementById('tbody');
+        tbody.innerHTML = '';
+        const f = String(filter || '').trim().toLowerCase();
+        const list = customers.filter(c => {
+          if (!f) return true;
+          return (c.name || '').toLowerCase().includes(f) || (c.email || '').toLowerCase().includes(f);
+        });
+        if (!list.length) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 7;
+          td.className = 'small';
+          text(td, list.length === 0 && f ? 'No customers match your search.' : 'No customers yet. Add one above.');
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+          return;
+        }
+        for (const c of list) {
+          const tr = document.createElement('tr');
+
+          const make = v => {
+            const td = document.createElement('td'); text(td, v); return td;
+          };
+
+          tr.appendChild(make(c.id));
+          tr.appendChild(make(c.name));
+          tr.appendChild(make(c.email));
+          tr.appendChild(make(c.phone || '-'));
+          tr.appendChild(make(c.source || '-'));
+          tr.appendChild(make(new Date(c.joined).toLocaleString()));
+          const actions = document.createElement('td');
+          actions.className = 'actions';
+          const edit = document.createElement('button');
+          edit.textContent = 'Edit';
+          edit.addEventListener('click', () => startEdit(c.id));
+          const del = document.createElement('button');
+          del.textContent = 'Delete';
+          del.addEventListener('click', () => removeCustomer(c.id));
+          actions.appendChild(edit);
+          actions.appendChild(del);
+          tr.appendChild(actions);
+
+          tbody.appendChild(tr);
+        }
+      }
+
+      function validateForm(data) {
+        if (!data.name || !data.name.trim()) return 'Name is required.';
+        if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) return 'Valid email is required.';
+        if (data.phone && data.phone.length > 60) return 'Phone looks too long.';
+        if (data.notes && data.notes.length > 300) return 'Notes must be <= 300 chars.';
+        return '';
+      }
+
+      function addCustomer(data) {
+        const now = Date.now();
+        const customer = {
+          id: uid(),
+          name: data.name.trim(),
+          email: data.email.trim(),
+          phone: data.phone ? data.phone.trim() : '',
+          source: data.source || '',
+          notes: data.notes || '',
+          joined: now
+        };
+        customers.unshift(customer);
+        save();
+        renderTable(document.getElementById('search').value);
+        showMessage('Customer added');
+      }
+
+      function startEdit(id) {
+        const c = customers.find(x => x.id === id);
+        if (!c) return showMessage('Customer not found', 'warn');
+        document.getElementById('customerId').value = c.id;
+        document.getElementById('name').value = c.name;
+        document.getElementById('email').value = c.email;
+        document.getElementById('phone').value = c.phone || '';
+        document.getElementById('source').value = c.source || '';
+        document.getElementById('notes').value = c.notes || '';
+        document.getElementById('formMsg').textContent = 'Editing customer';
+      }
+
+      function updateCustomer(id, data) {
+        const idx = customers.findIndex(x => x.id === id);
+        if (idx < 0) return showMessage('Customer not found', 'warn');
+        customers[idx] = Object.assign({}, customers[idx], {
+          name: data.name.trim(),
+          email: data.email.trim(),
+          phone: data.phone ? data.phone.trim() : '',
+          source: data.source || '',
+          notes: data.notes || ''
+        });
+        save();
+        renderTable(document.getElementById('search').value);
+        showMessage('Customer updated');
+      }
+
+      function removeCustomer(id) {
+        if (!confirm('Delete this customer? This action cannot be undone.')) return;
+        customers = customers.filter(x => x.id !== id);
+        save();
+        renderTable(document.getElementById('search').value);
+        showMessage('Customer removed', 'success');
+      }
+
+      function resetForm() {
+        document.getElementById('customerForm').reset();
+        document.getElementById('customerId').value = '';
+        document.getElementById('formMsg').textContent = '';
+      }
+
+      function exportCsv(visibleOnly = true) {
+        const rows = visibleOnly ? Array.from(document.querySelectorAll('#tbody tr')) : [];
+        let list;
+        if (visibleOnly) {
+          // simple capture of visible rows by mapping DOM back to customers by ID cell
+          list = [];
+          for (const tr of rows) {
+            const idCell = tr.querySelector('td');
+            if (!idCell) continue;
+            const id = idCell.textContent;
+            const c = customers.find(x => x.id === id);
+            if (c) list.push(c);
+          }
+        } else {
+          list = customers.slice();
+        }
+        if (!list.length) {
+          showMessage('No customers to export', 'warn');
+          return;
+        }
+        const header = ['id','name','email','phone','source','notes','joined'];
+        const csvRows = [header.join(',')];
+        for (const c of list) {
+          const row = header.map(h => {
+            let v = c[h] == null ? '' : String(c[h]);
+            v = v.replace(/"/g, '""');
+            return '"' + v + '"';
+          }).join(',');
+          csvRows.push(row);
+        }
+        const blob = new Blob([csvRows.join('\n')], {type: 'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'customers.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      // Form handling
+      document.getElementById('customerForm').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        const id = document.getElementById('customerId').value;
+        const data = {
+          name: document.getElementById('name').value,
+          email: document.getElementById('email').value,
+          phone: document.getElementById('phone').value,
+          source: document.getElementById('source').value,
+          notes: document.getElementById('notes').value
+        };
+        const v = validateForm(data);
+        const fm = document.getElementById('formMsg');
+        if (v) {
+          fm.textContent = v;
+          return;
+        }
+        fm.textContent = '';
+        if (id) updateCustomer(id, data);
+        else addCustomer(data);
+        resetForm();
+      });
+
+      document.getElementById('reset').addEventListener('click', function () {
+        resetForm();
+      });
+
+      document.getElementById('search').addEventListener('input', function (ev) {
+        renderTable(ev.target.value);
+      });
+
+      document.getElementById('exportCsv').addEventListener('click', function () {
+        exportCsv(true);
+      });
+
+      document.getElementById('clearAll').addEventListener('click', function () {
+        if (!confirm('Clear all customers from localStorage?')) return;
+        customers = [];
+        save();
+        renderTable();
+        showMessage('All customers cleared', 'warn');
+      });
+
+      // Initialize with sample data if empty (for demo)
+      function seedIfEmpty() {
+        if (customers.length) return;
+        customers = [
+          {id: uid(), name: 'Alice Johnson', email: 'alice@example.com', phone: '+1 555 1000', source: 'Website', notes: '', joined: Date.now()-86400000},
+          {id: uid(), name: 'Bob Lee', email: 'bob.lee@example.com', phone: '', source: 'Referral', notes: 'Important client', joined: Date.now()-3600*1000}
+        ];
+        save();
+      }
+
+      // bootstrap
+      load();
+      seedIfEmpty();
+      renderTable();
+    })();
+  </script>
+</body>
+</html>
